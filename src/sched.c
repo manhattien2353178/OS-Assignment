@@ -8,7 +8,9 @@
 static struct queue_t ready_queue;
 static struct queue_t run_queue;
 static pthread_mutex_t queue_lock;
-
+static int current_queue_index = 0;			// current queue index
+//static int emptyQueue_counter = 0;  		// num of queue is over
+static int curr_slot[MAX_PRIO];
 static struct queue_t running_list;
 #ifdef MLQ_SCHED
 static struct queue_t mlq_ready_queue[MAX_PRIO];
@@ -47,11 +49,20 @@ void init_scheduler(void) {
  *  State representation   prio = 0 .. MAX_PRIO, curr_slot = 0..(MAX_PRIO - prio)
  */
 struct pcb_t * get_mlq_proc(void) {
-	struct pcb_t * proc = NULL;
-	/*TODO: get a process from PRIORITY [ready_queue].
-	 * Remember to use lock to protect the queue.
-	 * */
-	return proc;	
+    struct pcb_t * proc = NULL;
+    pthread_mutex_lock(&queue_lock);
+    for (unsigned long prio = 0; prio < MAX_PRIO; prio++) {
+        if (!empty(&mlq_ready_queue[prio]) && curr_slot[prio] < slot[prio]) {
+            proc = dequeue(&mlq_ready_queue[prio]);
+            curr_slot[prio]++;
+            break;
+        }
+        if (empty(&mlq_ready_queue[prio]) && curr_slot[prio] >= slot[prio]) {
+            curr_slot[prio] = 0;
+        }
+    }
+    pthread_mutex_unlock(&queue_lock);
+    return proc;
 }
 
 void put_mlq_proc(struct pcb_t * proc) {
@@ -76,7 +87,8 @@ void put_proc(struct pcb_t * proc) {
 	proc->running_list = & running_list;
 
 	/* TODO: put running proc to running_list */
-	
+
+
 	return put_mlq_proc(proc);
 }
 
@@ -95,7 +107,6 @@ struct pcb_t * get_proc(void) {
 	/*TODO: get a process from [ready_queue].
 	 * Remember to use lock to protect the queue.
 	 * */
-
 	return proc;
 }
 
@@ -104,7 +115,7 @@ void put_proc(struct pcb_t * proc) {
 	proc->running_list = & running_list;
 
 	/* TODO: put running proc to running_list */
-	
+
 	pthread_mutex_lock(&queue_lock);
 	enqueue(&run_queue, proc);
 	pthread_mutex_unlock(&queue_lock);
