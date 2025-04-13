@@ -93,19 +93,34 @@ int vmap_page_range(struct pcb_t *caller,           // process call
   /* TODO: update the rg_end and rg_start of ret_rg 
   //ret_rg->rg_end =  ....
   //ret_rg->rg_start = ...
-  //ret_rg->vmaid = ...
+  //ret_rg->vmaid = ... cái này không có trong struct??
   */
-
+ // ret_rg->rg_start=ret_rg->rg_end=addr nếu không cho aleast thì sao ??;
+ ret_rg->rg_start=addr;
+ ret_rg->rg_end = addr + pgnum * PAGING_PAGESZ; // Tính toán rg_end
+ struct framephy_struct *fpit=frames;
+   int ret_value=0;
   /* TODO map range of frame to address space
    *      [addr to addr + pgnum*PAGING_PAGESZ
    *      in page table caller->mm->pgd[]
    */
-
-  /* Tracking for later page replacement activities (if needed)
-   * Enqueue new usage page */
-  enlist_pgn_node(&caller->mm->fifo_pgn, pgn + pgit);
-
-  return 0;
+  for(pgit=0; pgit<pgnum ; pgit++){
+    if(fpit=NULL){ 
+      ret_value=-1;
+      break;
+    }
+    else{
+     // Xác định địa chỉ bảng trang
+     uint32_t *pte = &caller->mm->pgd[pgn + pgit]; // Truy cập mục bảng trang tương ứng
+     pte_set_fpn(pte,fpit->fpn);    // Cập nhật mục bảng trang với khung tương ứng
+      /* Tracking for later page replacement activities (if needed)
+      * Enqueue new usage page */
+      enlist_pgn_node(&caller->mm->fifo_pgn, pgn + pgit);
+    }
+    fpit=fpit->fp_next;
+  }
+ 
+  return ret_value;
 }
 
 /*
@@ -119,26 +134,32 @@ int alloc_pages_range(struct pcb_t *caller, int req_pgnum, struct framephy_struc
 {
   int pgit, fpn;
   struct framephy_struct *newfp_str = NULL;
-
+  int ret_value=0;
   /* TODO: allocate the page 
   //caller-> ...
   //frm_lst-> ...
   */
-
+ 
   for (pgit = 0; pgit < req_pgnum; pgit++)
   {
   /* TODO: allocate the page 
    */
     if (MEMPHY_get_freefp(caller->mram, &fpn) == 0)
     {
+      struct framephy_struct *newfp_node= malloc(sizeof(struct framephy_struct));
       newfp_str->fpn = fpn;
+      newfp_node->owner = caller->mm;
+      newfp_node->fp_next = newfp_str;
+      newfp_str = newfp_node;
     }
     else
     { // TODO: ERROR CODE of obtaining somes but not enough frames
+      ret_value=-3000;
+      break;
     }
   }
-
-  return 0;
+  *frm_lst=newfp_str;
+  return ret_value;
 }
 
 /*
@@ -228,13 +249,13 @@ int init_mm(struct mm_struct *mm, struct pcb_t *caller)
 
   /* TODO update VMA0 next */
   // vma0->next = ...
-
+  vma0->vm_next=NULL;
   /* Point vma owner backward */
   vma0->vm_mm = mm; 
 
   /* TODO: update mmap */
   //mm->mmap = ...
-
+  mm->mmap= vma0;
   return 0;
 }
 
