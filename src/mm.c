@@ -105,7 +105,7 @@ int vmap_page_range(struct pcb_t *caller,           // process call
    *      in page table caller->mm->pgd[]
    */
   for(pgit=0; pgit<pgnum ; pgit++){
-    if(fpit=NULL){ 
+    if(fpit==NULL){ 
       ret_value=-1;
       break;
     }
