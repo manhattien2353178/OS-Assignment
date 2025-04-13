@@ -163,6 +163,14 @@ int MEMPHY_dump(struct memphy_struct *mp)
   /*TODO dump memphy contnt mp->storage
    *     for tracing the memory content
    */
+  // thực hiện việc xuất nội dung bộ nhớ theo định dạng từ 32-bit (4 byte)
+  if(mp=NULL||mp->storage==NULL) return -1;
+  uint32_t* ptr= (uint32_t*)mp->storage;//chuyển từ Byte->uint32_tt
+  
+  for(int i=0;i<mp->maxsz/4;i++){
+   
+   if(ptr[i]!=0) printf("%08x: %08x\n", i*4,ptr[i]);
+  }
    return 0;
 }
 
