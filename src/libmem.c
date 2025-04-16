@@ -178,6 +178,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
   /* TODO Implement free region */
   int val = __free(proc, 0, reg_index) 
+  #ifdef IODUMP
   printf("===== PHYSICAL MEMORY AFTER DEALLOCATION =====\n")
   printf("PID=%d - Region=%d\n", proc->pid, reg_index);
   #ifdef PAGETBL_DUMP
