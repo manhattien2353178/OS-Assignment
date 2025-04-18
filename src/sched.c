@@ -16,17 +16,29 @@ static int current_queue_index = 0;
 #endif
 
 int queue_empty(void) {
-#ifdef MLQ_SCHED
-    for (int prio = 0; prio < MAX_PRIO; prio++) {
-        if (!empty(&mlq_ready_queue[prio])) {
-            return 0;
+    #ifdef MLQ_SCHED
+        // Khóa mutex để đảm bảo kiểm tra an toàn trong môi trường đa luồng
+        pthread_mutex_lock(&queue_lock); 
+        int found_non_empty = 0; // Biến cờ để kiểm tra
+        for (int prio = 0; prio < MAX_PRIO; prio++) {
+            if (!empty(&mlq_ready_queue[prio])) {
+                found_non_empty = 1; // Đánh dấu đã tìm thấy hàng đợi không rỗng
+                break; // Thoát sớm vì chỉ cần tìm thấy 1 hàng đợi không rỗng
+            }
         }
+        // Mở khóa mutex
+        pthread_mutex_unlock(&queue_lock); 
+    
+        // Trả về -1 nếu tìm thấy hàng đợi không rỗng, ngược lại trả về 1
+        return found_non_empty ? -1 : 1; 
+    #else
+        // Phần else giữ nguyên hoặc bạn có thể thêm khóa mutex nếu cần
+        pthread_mutex_lock(&queue_lock);
+        int is_empty = empty(&ready_queue);
+        pthread_mutex_unlock(&queue_lock);
+        return is_empty;
+    #endif
     }
-    return 1;
-#else
-    return empty(&ready_queue);
-#endif
-}
 
 void init_scheduler(void) {
 #ifdef MLQ_SCHED
