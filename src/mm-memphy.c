@@ -163,15 +163,24 @@ int MEMPHY_dump(struct memphy_struct *mp)
   /*TODO dump memphy contnt mp->storage
    *     for tracing the memory content
    */
-  // thực hiện việc xuất nội dung bộ nhớ theo định dạng từ 32-bit (4 byte)
-  if(mp=NULL||mp->storage==NULL) return -1;
-  uint32_t* ptr= (uint32_t*)mp->storage;//chuyển từ Byte->uint32_tt
-  
-  for(int i=0;i<mp->maxsz/4;i++){
-   
-   if(ptr[i]!=0) printf("%08x: %08x\n", i*4,ptr[i]);
-  }
-   return 0;
+  if (!mp || !mp->storage) {
+   printf("MEMPHY_DUMP: Invalid memory structure.\n");
+   return -1;
+}
+
+printf("===== PHYSICAL MEMORY DUMP =====\n");
+
+for (int i = 0; i < mp->maxsz; i++) {
+   if (mp->storage[i] != 0) {
+       printf("BYTE %08X: %d\n", i, mp->storage[i]);
+   }
+}
+
+printf("===== PHYSICAL MEMORY END-DUMP =====\n");
+printf("================================================================\n");
+
+return 0;
+ 
 }
 
 int MEMPHY_put_freefp(struct memphy_struct *mp, int fpn)
