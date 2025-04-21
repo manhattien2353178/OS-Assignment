@@ -20,21 +20,14 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
   //Hàm này lấy vùng bộ nhớ ảo dựa trên ID. Nó sẽ duyệt qua danh sách các vùng bộ nhớ ảo cho đến khi tìm thấy vùng có ID tương ứng.
   struct vm_area_struct *pvma = mm->mmap;
 
-  if (mm->mmap == NULL)
-    return NULL;
+  if (mm->mmap == NULL) return NULL;
 
-  int vmait = pvma->vm_id;
-
-  while (vmait < vmaid)
-  {
-    if (pvma == NULL)
-      return NULL;
-
-    pvma = pvma->vm_next;
-    vmait = pvma->vm_id;
+    while (pvma != NULL) {
+      if (pvma->vm_id == vmaid)
+          return pvma;
+      pvma = pvma->vm_next;
   }
-
-  return pvma;
+  return NULL;
 }
 
 int __mm_swap_page(struct pcb_t *caller, int vicfpn , int swpfpn)
@@ -82,17 +75,13 @@ int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, int vmastart, int 
   /* TODO validate the planned memory area is not overlapped */
   while(vma!= NULL){
       // Nếu vùng hiện tại là rỗng -> bỏ qua
-      if (vma->vm_id==vmaid/*vma->vm_start == vma->vm_end*/) {
-        vma = vma->vm_next;
-        continue;
-    }
-
-    // Kiểm tra có chồng lấn hay không
+      if (vma->vm_start < vma->vm_end) {
+        // Kiểm tra có chồng lấn hay không
     if (!(vmaend <= vma->vm_start || vmastart >= vma->vm_end)) {
-        // Có overlap -> trả về lỗi
-        return -1;
+      // Có overlap -> trả về lỗi
+      return -1;
+     }
     }
-
     vma = vma->vm_next;
   }
   return 0;
@@ -120,7 +109,8 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, int inc_sz)
 
   /* TODO: Obtain the new vm area based on vmaid */
   //cur_vma->vm_end... 
-  cur_vma->vm_end += inc_sz;
+  cur_vma->sbrk += inc_amt;
+  cur_vma->vm_end = cur_vma->sbrk;
   // inc_limit_ret...
    // Ánh xạ bộ nhớ vào MEMRAM
   if (vm_map_ram(caller, area->rg_start, area->rg_end, 
