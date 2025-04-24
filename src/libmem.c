@@ -22,7 +22,7 @@
  #include <stdio.h>
  #include <pthread.h>
  
- static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
+ //static pthread_mutex_t mmvm_lock = PTHREAD_MUTEX_INITIALIZER;
  
  /*enlist_vm_freerg_list - add new rg to freerg_list
   *@mm: memory region
@@ -68,41 +68,43 @@
   */
  int __alloc(struct pcb_t *caller, int vmaid, int rgid, int size, int *alloc_addr)
  {
-   struct vm_rg_struct rgnode;
- 
-   // Bước 1: tìm vùng free trước
-   if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0)
-   {
-     // Cập nhật vào bảng symbol
-     caller->mm->symrgtbl[rgid] = rgnode;
-     *alloc_addr = rgnode.rg_start;
- 
-     pthread_mutex_unlock(&mmvm_lock);
-     return 0;
-   }
- 
-   // Bước 2: Không có vùng free => mở rộng VMA
-   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
-   if (!cur_vma) return -1;
- 
-   int inc_sz = PAGING_PAGE_ALIGNSZ(size);
-   int old_sbrk = cur_vma->sbrk;
- 
-   if (inc_vma_limit(caller, vmaid, inc_sz) < 0) return -1;
- 
-   // Cập nhật vào symbol table
-   caller->mm->symrgtbl[rgid].rg_start = old_sbrk;
-   caller->mm->symrgtbl[rgid].rg_end = old_sbrk + size;
-   *alloc_addr = old_sbrk;
- 
-   // Nếu mở rộng thừa, cho vào freerg_list
-   if (old_sbrk + size < cur_vma->sbrk) {
-     struct vm_rg_struct *excess_rg = malloc(sizeof(struct vm_rg_struct));
-     excess_rg->rg_start = old_sbrk + size;
-     excess_rg->rg_end = cur_vma->sbrk;
-     excess_rg->rg_next = NULL;
-     enlist_vm_freerg_list(caller->mm, excess_rg);
-   }
+   /* Allocate at the toproof */
+struct vm_rg_struct rgnode;
+
+/* Try getting free region from freelist */
+if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0)
+{
+    caller->mm->symrgtbl[rgid] = rgnode;
+    *alloc_addr = rgnode.rg_start;
+    return 0;
+}
+
+/* Failed to get from freelist -> extend sbrk limit */
+struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+if (cur_vma == NULL) return -1;
+
+int old_sbrk = cur_vma->sbrk;
+
+/* Align size to page size for allocation */
+int aligned_sz = PAGING_PAGE_ALIGNSZ(size);
+
+/* Increase limit (sbrk) */
+if (inc_vma_limit(caller, vmaid, aligned_sz) < 0) return -1;
+
+/* Invoke syscall to actually map new physical memory */
+struct sc_regs regs;
+regs.a1 = old_sbrk;             // start address
+regs.a2 = aligned_sz;           // increase size
+regs.a3 = SYSMEM_INC_OP;        // operation type
+
+syscall(caller, 17, &regs);     // syscall 17 = sys_memmap
+
+/* Update symbol table with new region info */
+caller->mm->symrgtbl[rgid].rg_start = old_sbrk;
+caller->mm->symrgtbl[rgid].rg_end   = old_sbrk + size;
+
+/* Return virtual start address */
+*alloc_addr = old_sbrk;
  
    return 0;
  }
@@ -226,7 +228,15 @@
      regs.a1 = vicfpn;
      regs.a2 = swpfpn;
      regs.a3 = SYSMEM_SWP_OP;*/
-     __swap_cp_page(caller->mram,vicfpn,caller->active_mswp,swpfpn);
+    // 4. Lấy frame lưu giá trị cần truy xuất từ swap (nếu có)
+    tgtfpn = PAGING_PTE_SWP(pte);
+
+    // 5. Gọi syscall để copy victim từ RAM -> SWAP
+    struct sc_regs regs1;
+    regs1.a1 = vicfpn;        // nguồn: RAM
+    regs1.a2 = swpfpn;        // đích: SWAP
+    regs1.a3 = SYSMEM_SWP_OP;
+    syscall(caller, 17, &regs1);
      /* SYSCALL 17 sys_memmap */
  
      //syscall(17, &regs, caller);
@@ -242,7 +252,12 @@
      //regs.a2 =...
      //regs.a3 =..
      */
-     __swap_cp_page(caller->active_mswp,tgtfpn,caller->mram,vicfpn);
+     // 6. Gọi syscall để copy target từ SWAP -> RAM
+     struct sc_regs regs2;
+     regs2.a1 = tgtfpn;        // nguồn: SWAP
+     regs2.a2 = vicfpn;        // đích: RAM
+     regs2.a3 = SYSMEM_SWP_OP;
+     syscall(caller, 17, &regs2);
      /* SYSCALL 17 sys_memmap */
  
      //syscall(17, &regs, caller);
@@ -251,12 +266,13 @@
      //pte_set_swap() 
      //mm->pgd;
  
-     pte_set_swap(&mm->pgd[vicpgn],0,swpfpn);
+       // 7. Cập nhật lại page table
+    pte_set_swap(&mm->pgd[vicpgn], 0, swpfpn); // victim => SWAP
+    pte_set_fpn(&mm->pgd[pgn], vicfpn);        // target => RAM
      /* Update its online status of the target page */
      //pte_set_fpn() &
      //mm->pgd[pgn];
      //pte_set_fpn();
-     pte_set_fpn(&mm->pgd[pgn],vicfpn);
      enlist_pgn_node(&caller->mm->fifo_pgn,pgn);
      MEMPHY_put_freefp(caller->active_mswp, tgtfpn);
    }
@@ -292,14 +308,22 @@
  
    int phyaddr = (fpn << PAGING_ADDR_FPN_LOBIT) + off;
  
-   MEMPHY_read(caller->mram, phyaddr, data);
+   
  
    // int phyaddr
    //struct sc_regs regs;
    //regs.a1 = ...
    //regs.a2 = ...
    //regs.a3 = ...
- 
+   /* Gọi syscall 17 để đọc */
+   struct sc_regs regs;
+   regs.a1 = SYSMEM_IO_READ;
+    regs.a2 = phyaddr;
+    regs.a3 = 0;
+
+    syscall(caller, 17, &regs);
+
+    *data = (BYTE)regs.a3;  // Lấy kết quả đọc từ regs
    /* SYSCALL 17 sys_memmap */
  
    // Update data
@@ -339,10 +363,17 @@
    //regs.a3 = ...
  
    /* SYSCALL 17 sys_memmap */
-   MEMPHY_write(caller->mram, phyaddr, value);
+     /* Thiết lập thanh ghi syscall */
+     struct sc_regs regs;
+     regs.a1 = SYSMEM_IO_WRITE;
+     regs.a2 = phyaddr;
+     regs.a3 = value;
+ 
+     /* Gọi syscall 17 */
+     syscall(caller, 17, &regs);
    // Update data
    // data = (BYTE) 
- 
+    
    return 0;
  }
  
@@ -386,7 +417,6 @@
    print_pgtbl(proc, 0, -1); // print max TBL
  #endif
  MEMPHY_dump(proc->mram);
-
  #endif
  
    return val;
@@ -427,7 +457,6 @@
    print_pgtbl(proc, 0, -1); //print max TBL
  #endif
  MEMPHY_dump(proc->mram);
-
  #endif
  
    return __write(proc, 0, destination, offset, data);
