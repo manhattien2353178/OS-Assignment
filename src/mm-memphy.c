@@ -1,125 +1,218 @@
 // #ifdef MM_PAGING
 /*
  * PAGING based Memory Management
- * Virtual memory module mm/mm-vm.c
+ * Memory physical module mm/mm-memphy.c
  */
 
- #include "string.h"
  #include "mm.h"
- #include <stdlib.h>
  #include <stdio.h>
- #include <pthread.h>
+ #include <stdlib.h>
+ #include <string.h>
  
- /*get_vma_by_num - get vm area by numID
-  *@mm: memory region
-  *@vmaid: ID vm area to alloc memory region
-  *
+ /*
+  *  MEMPHY_mv_csr - move MEMPHY cursor
+  *  @mp: memphy struct
+  *  @offset: offset
   */
- struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
+ int MEMPHY_mv_csr(struct memphy_struct *mp, int offset)
  {
-   //Hàm này lấy vùng bộ nhớ ảo dựa trên ID. Nó sẽ duyệt qua danh sách các vùng bộ nhớ ảo cho đến khi tìm thấy vùng có ID tương ứng.
-   struct vm_area_struct *pvma = mm->mmap;
+    int numstep = 0;
  
-   if (mm->mmap == NULL) return NULL;
+    mp->cursor = 0;
+    while (numstep < offset && numstep < mp->maxsz)
+    {
+       /* Traverse sequentially */
+       mp->cursor = (mp->cursor + 1) % mp->maxsz;
+       numstep++;
+    }
  
-     while (pvma != NULL) {
-       if (pvma->vm_id == vmaid)
-           return pvma;
-       pvma = pvma->vm_next;
-   }
-   return NULL;
+    return 0;
  }
  
- int __mm_swap_page(struct pcb_t *caller, int vicfpn , int swpfpn)
- {
-     __swap_cp_page(caller->mram, vicfpn, caller->active_mswp, swpfpn);
-     return 0;
- }
- 
- /*get_vm_area_node - get vm area for a number of pages
-  *@caller: caller
-  *@vmaid: ID vm area to alloc memory region
-  *@incpgnum: number of page
-  *@vmastart: vma end
-  *@vmaend: vma end
-  *
+ /*
+  *  MEMPHY_seq_read - read MEMPHY device
+  *  @mp: memphy struct
+  *  @addr: address
+  *  @value: obtained value
   */
- struct vm_rg_struct *get_vm_area_node_at_brk(struct pcb_t *caller, int vmaid, int size, int alignedsz)
+ int MEMPHY_seq_read(struct memphy_struct *mp, int addr, BYTE *value)
  {
-   
-   /* TODO retrive current vma to obtain newrg, current comment out due to compiler redundant warning*/
-   //struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
-   struct vm_rg_struct *  newrg = malloc(sizeof(struct vm_rg_struct));
-   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
-  
-   /* TODO: update the newrg boundary
-   // newrg->rg_start = ...
-   // newrg->rg_end = ...
-   */
-  newrg->rg_start = cur_vma->vm_end;
-  newrg->rg_end = cur_vma->vm_end + alignedsz;
- // newrg->rg_start = cur_vma->sbrk;
-  //newrg->rg_end = newrg->rg_start + size;
-   return newrg;
- }
- 
- /*validate_overlap_vm_area
-  *@caller: caller
-  *@vmaid: ID vm area to alloc memory region
-  *@vmastart: vma end
-  *@vmaend: vma end
-  *
-  */
- int validate_overlap_vm_area(struct pcb_t *caller, int vmaid, int vmastart, int vmaend)
- {
-   //struct vm_area_struct *vma = caller->mm->mmap;
-   struct vm_area_struct *vma = caller->mm->mmap;
-   /* TODO validate the planned memory area is not overlapped */
-   while(vma!= NULL){
-       // Nếu vùng hiện tại là rỗng -> bỏ qua
-       if (vma->vm_start < vma->vm_end) {
-         // Kiểm tra có chồng lấn hay không
-     if (!(vmaend <= vma->vm_start || vmastart >= vma->vm_end)) {
-       // Có overlap -> trả về lỗi
+    if (mp == NULL)
        return -1;
-      }
-     }
-     vma = vma->vm_next;
-   }
-   return 0;
+ 
+    if (!mp->rdmflg)
+       return -1; /* Not compatible mode for sequential read */
+ 
+    MEMPHY_mv_csr(mp, addr);
+    *value = (BYTE)mp->storage[addr];
+ 
+    return 0;
  }
  
- /*inc_vma_limit - increase vm area limits to reserve space for new variable
-  *@caller: caller
-  *@vmaid: ID vm area to alloc memory region
-  *@inc_sz: increment size
-  *
+ /*
+  *  MEMPHY_read read MEMPHY device
+  *  @mp: memphy struct
+  *  @addr: address
+  *  @value: obtained value
   */
- int inc_vma_limit(struct pcb_t *caller, int vmaid, int inc_sz)
+ int MEMPHY_read(struct memphy_struct *mp, int addr, BYTE *value)
  {
-   struct vm_rg_struct * newrg = malloc(sizeof(struct vm_rg_struct));
-   int inc_amt = PAGING_PAGE_ALIGNSZ(inc_sz);
-   int incnumpage =  inc_amt / PAGING_PAGESZ;
-   struct vm_rg_struct *area = get_vm_area_node_at_brk(caller, vmaid, inc_sz, inc_amt);
-   struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+    if (mp == NULL)
+       return -1;
  
-   int old_end = cur_vma->vm_end;
+    if (mp->rdmflg)
+       *value = mp->storage[addr];
+    else /* Sequential access device */
+       return MEMPHY_seq_read(mp, addr, value);
  
-   /*Validate overlap of obtained region */
-   if (validate_overlap_vm_area(caller, vmaid, area->rg_start, area->rg_end) < 0)
-     return -1; /*Overlap and failed allocation */
+    return 0;
+ }
  
-   /* TODO: Obtain the new vm area based on vmaid */
-   //cur_vma->vm_end... 
-   cur_vma->sbrk += inc_amt;
-   cur_vma->vm_end = cur_vma->sbrk;
-   // inc_limit_ret...
-    // Ánh xạ bộ nhớ vào MEMRAM
-   if (vm_map_ram(caller, area->rg_start, area->rg_end, 
-                     old_end, incnumpage , newrg) < 0)
-     return -1; /* Map the memory to MEMRAM */
+ /*
+  *  MEMPHY_seq_write - write MEMPHY device
+  *  @mp: memphy struct
+  *  @addr: address
+  *  @data: written data
+  */
+ int MEMPHY_seq_write(struct memphy_struct *mp, int addr, BYTE value)
+ {
  
-   return 0;
+    if (mp == NULL)
+       return -1;
+ 
+    if (!mp->rdmflg)
+       return -1; /* Not compatible mode for sequential read */
+ 
+    MEMPHY_mv_csr(mp, addr);
+    mp->storage[addr] = value;
+ 
+    return 0;
+ }
+ 
+ /*
+  *  MEMPHY_write-write MEMPHY device
+  *  @mp: memphy struct
+  *  @addr: address
+  *  @data: written data
+  */
+ int MEMPHY_write(struct memphy_struct *mp, int addr, BYTE data)
+ {
+    if (mp == NULL)
+       return -1;
+ 
+    if (mp->rdmflg)
+       mp->storage[addr] = data;
+    else /* Sequential access device */
+       return MEMPHY_seq_write(mp, addr, data);
+ 
+    return 0;
+ }
+
+ /*
+  *  MEMPHY_format-format MEMPHY device
+  *  @mp: memphy struct
+  */
+ int MEMPHY_format(struct memphy_struct *mp, int pagesz)
+ {
+    /* This setting come with fixed constant PAGESZ */
+    int numfp = mp->maxsz / pagesz;
+    struct framephy_struct *newfst, *fst;
+    int iter = 0;
+ 
+    if (numfp <= 0)
+       return -1;
+ 
+    /* Init head of free framephy list */
+    fst = malloc(sizeof(struct framephy_struct));
+    fst->fpn = iter;
+    mp->free_fp_list = fst;
+ 
+    /* We have list with first element, fill in the rest num-1 element member*/
+    for (iter = 1; iter < numfp; iter++)
+    {
+       newfst = malloc(sizeof(struct framephy_struct));
+       newfst->fpn = iter;
+       newfst->fp_next = NULL;
+       fst->fp_next = newfst;
+       fst = newfst;
+    }
+ 
+    return 0;
+ }
+ 
+ int MEMPHY_get_freefp(struct memphy_struct *mp, int *retfpn)
+ {
+    struct framephy_struct *fp = mp->free_fp_list;
+ 
+    if (fp == NULL)
+       return -1;
+ 
+    *retfpn = fp->fpn;
+    mp->free_fp_list = fp->fp_next;
+ 
+    /* MEMPHY is iteratively used up until its exhausted
+     * No garbage collector acting then it not been released
+     */
+    free(fp);
+ 
+    return 0;
+ }
+ 
+ int MEMPHY_dump(struct memphy_struct *mp)
+ {
+   /*TODO dump memphy contnt mp->storage
+    *     for tracing the memory content
+    */
+   if (!mp || !mp->storage) {
+    printf("MEMPHY_DUMP: Invalid memory structure.\n");
+    return -1;
+ }
+ 
+ printf("===== PHYSICAL MEMORY DUMP =====\n");
+ 
+ for (int i = 0; i < mp->maxsz; i++) {
+    if (mp->storage[i] != 0) {
+        printf("BYTE %08X: %d\n", i, mp->storage[i]);
+    }
+ }
+ 
+ printf("===== PHYSICAL MEMORY END-DUMP =====\n");
+ printf("================================================================\n");
+ 
+ return 0;
+  
+ }
+ 
+ int MEMPHY_put_freefp(struct memphy_struct *mp, int fpn)
+ {
+    struct framephy_struct *fp = mp->free_fp_list;
+    struct framephy_struct *newnode = malloc(sizeof(struct framephy_struct));
+ 
+    /* Create new node with value fpn */
+    newnode->fpn = fpn;
+    newnode->fp_next = fp;
+    mp->free_fp_list = newnode;
+ 
+    return 0;
+ }
+ 
+ /*
+  *  Init MEMPHY struct
+  */
+ int init_memphy(struct memphy_struct *mp, int max_size, int randomflg)
+ {
+    mp->storage = (BYTE *)malloc(max_size * sizeof(BYTE));
+    mp->maxsz = max_size;
+    memset(mp->storage, 0, max_size * sizeof(BYTE));
+ 
+    MEMPHY_format(mp, PAGING_PAGESZ);
+ 
+    mp->rdmflg = (randomflg != 0) ? 1 : 0;
+ 
+    if (!mp->rdmflg) /* Not Ramdom acess device, then it serial device*/
+       mp->cursor = 0;
+ 
+    return 0;
  }
  
  // #endif
